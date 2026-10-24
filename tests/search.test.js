@@ -158,6 +158,29 @@ test("Edge Gallery handler safely falls back for invalid language and adds opt-i
   assert.ok(urls.some((url) => url.startsWith("https://en.wikipedia.org/")));
   assert.ok(!urls.some((url) => url.includes("foo/bar")));
 
+  const prose = "Example topic guide explains this subject with useful details. ".repeat(20);
+  context.fetch = async (url) => {
+    urls.push(url);
+    if (url.startsWith("https://r.jina.ai/https://www.bing.com/search")) {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => "[Example topic guide](https://source.example/article)",
+      };
+    }
+    if (url.startsWith("https://r.jina.ai/https://source.example/")) {
+      return { ok: true, status: 200, text: async () => "Access denied. ".repeat(30) };
+    }
+    if (url === "https://source.example/article") {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => "text/html" },
+        text: async () => "<html><body>" + prose + "</body></html>",
+      };
+    }
+    return { ok: false, status: 404 };
+  };
   const debug = JSON.parse(await handler(JSON.stringify({
     query: "example topic",
     debug: true,
@@ -166,4 +189,5 @@ test("Edge Gallery handler safely falls back for invalid language and adds opt-i
   assert.deepEqual(Object.keys(debug).sort(), ["debug", "result"]);
   assert.equal(typeof debug.debug.counts.results, "number");
   assert.ok(Array.isArray(debug.debug.escalationSteps));
+  assert.equal(debug.debug.sourceUsage.direct, 1);
 });
