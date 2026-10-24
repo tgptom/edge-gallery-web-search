@@ -10,9 +10,10 @@ description: Search the web for up-to-date information, news, definitions, and t
 Call the `run_js` tool using `index.html` and a JSON string for `data` with the following fields:
 
 - **query**: Required. The search topic in natural language. Prefer short keyword form (3–8 words) over long sentences — strip filler words like "what is", "tell me about", "can you find". Keep entity names, dates, and distinguishing terms. Examples: `"2026 Oscars best picture"`, `"kubernetes pod eviction signals"`, `"webgpu safari support"`. For time-sensitive or recurring topics (elections, awards, sports seasons, releases), include the year. If the user omits the year, default to the current year.
-- **lang**: Required. The 2-letter language code matching the language of the `query` you provided. Use standard codes, e.g. `"en"` (English), `"es"` (Spanish), `"zh"` (Chinese), `"fr"` (French), `"de"` (German), `"ja"` (Japanese), `"ko"` (Korean), `"it"` (Italian), `"pt"` (Portuguese), `"ru"` (Russian), `"ar"` (Arabic), `"hi"` (Hindi).
+- **lang**: The language code matching the language of the `query` you provided (defaults to `"en"`). Use a 2–3 letter code and optional BCP47-like subtags, e.g. `"en"`, `"pt-br"`, `"zh-hans"`. Malformed values safely fall back to `"en"`.
+- **debug**: Optional boolean. Set to `true` to include non-sensitive result counts, escalation steps, and `jina`/`direct` page-source usage in the output JSON. It is omitted by default.
 
-The tool returns a JSON object: `{ "result": "<plain-text bundle>" }` on success, or `{ "error": "..." }` on failure. The `result` text contains these labelled sections (any may be absent):
+The tool returns `{ "result": "<plain-text bundle>" }` on success, or `{ "error": "..." }` on failure. When `debug` is `true`, a `debug` object is added alongside `result`; without it the output schema is unchanged. The `result` text contains these labelled sections (any may be absent):
 
 ```
 QUERY: <echo of normalized query>
