@@ -25,7 +25,8 @@
     "weather", "forecast", "temperature", "wetter", "tiempo", "clima",
     "météo", "meteo", "погода", "天気", "天气", "날씨", "طقس",
     "hava durumu", "hava", "cuaca", "พยากรณ์อากาศ", "พยากรณ์", "อากาศ",
-    "天氣", "날씨예보", "طقس اليوم", "मौसम", "मौसम पूर्वानुमान",
+    "天氣", "天气预报", "날씨예보", "طقس اليوم", "मौसम पूर्वानुमान",
+    "मौसम", "हवामान",
     "il tempo", "previsão do tempo", "previsão", "pronóstico",
   ]);
   const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -42,7 +43,7 @@
     "giu"
   );
   const WEATHER_PREPOSITION_RE =
-    /^\s*(?:in|at|for|of|à|en|de|del|do|da|na|no|во|в|の|の天気|に|于|在)\s+/iu;
+    /^\s*(?:(?:the|el|la|le|der|die|das)\s+)?(?:in|at|for|of|à|en|de|del|do|da|na|no|во|в|في|में|के\s+लिए|の|の天気|に|于|在)\s+/iu;
   const PLACE_STOPWORDS = new Set([
     "right", "now", "today", "tonight", "tomorrow", "yesterday", "current",
     "currently", "outside", "here", "there", "this", "week", "weekend",
@@ -260,6 +261,13 @@
         block.toLowerCase().replace(/\s+/gu, " ")));
       if (uniqueBlocks.size / blocks.length < 0.5) return false;
     }
+    const lines = text.split(/\r?\n/u).map((line) => line.trim())
+      .filter((line) => line.length >= 30);
+    if (lines.length >= 5) {
+      const uniqueLines = new Set(lines.map((line) =>
+        line.toLowerCase().replace(/\s+/gu, " ")));
+      if (uniqueLines.size / lines.length < 0.5) return false;
+    }
     return true;
   }
 
@@ -290,14 +298,15 @@
   async function withRequestSlot(task) {
     if (activeRequests >= CONFIG.maxConcurrentRequests) {
       await new Promise((resolve) => requestQueue.push(resolve));
+    } else {
+      activeRequests++;
     }
-    activeRequests++;
     try {
       return await task();
     } finally {
-      activeRequests--;
       const next = requestQueue.shift();
       if (next) next();
+      else activeRequests--;
     }
   }
 

@@ -12,44 +12,32 @@
 //      which returns clean markdown and bypasses most bot/JS walls.
 //      Direct fetch is used as a fallback if Jina fails.
 
+const Shared = require('./shared.js');
+const {
+  CONFIG,
+  extractBingResults,
+  extractDuckDuckGoResults,
+  isUsableContent,
+  normalizeLanguage,
+  stripHtml,
+} = Shared;
+
 const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ' +
   'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 
-const MAX_PAGES = 3;
-const MAX_PAGES_DEEP = 5; // additional pages fetched in escalation
-const MAX_CHARS_PER_PAGE = 3500;
-const MAX_WIKI_ARTICLES = 2;
-const FETCH_TIMEOUT_MS = 10000;
-const MIN_GOOD_PAGES = 2;   // below this, escalate
-const MIN_PAGE_CHARS = 400; // a page is "substantive" only above this
+const {
+  maxPages: MAX_PAGES,
+  maxPagesDeep: MAX_PAGES_DEEP,
+  maxCharsPerPage: MAX_CHARS_PER_PAGE,
+  maxWikiArticles: MAX_WIKI_ARTICLES,
+  minGoodPages: MIN_GOOD_PAGES,
+  minPageChars: MIN_PAGE_CHARS,
+} = CONFIG;
+const REQUESTS = Shared.createRequestController();
 
 async function fetchWithTimeout(url, opts = {}) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
-  try {
-    return await fetch(url, { ...opts, signal: ctrl.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function stripHtml(html) {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
-    .replace(/\s+/g, ' ')
-    .trim();
+  return REQUESTS.request(url, opts);
 }
 
 async function instantAnswer(query) {
@@ -68,10 +56,11 @@ async function instantAnswer(query) {
   }
 }
 
-async function wikipediaArticles(query) {
+async function wikipediaArticles(query, lang) {
   try {
+    const host = 'https://' + normalizeLanguage(lang) + '.wikipedia.org';
     const sUrl =
-      'https://en.wikipedia.org/w/api.php?action=query&format=json' +
+      host + '/w/api.php?action=query&format=json' +
       '&list=search&srlimit=' +
       MAX_WIKI_ARTICLES +
       '&srsearch=' +
@@ -91,7 +80,7 @@ async function wikipediaArticles(query) {
       titles.map(async (title) => {
         try {
           const u =
-            'https://en.wikipedia.org/api/rest_v1/page/summary/' +
+            host + '/api/rest_v1/page/summary/' +
             encodeURIComponent(title.replace(/ /g, '_'));
           const r = await fetchWithTimeout(u, {
             headers: { Accept: 'application/json', 'User-Agent': UA },
@@ -105,7 +94,7 @@ async function wikipediaArticles(query) {
               (j.content_urls &&
                 j.content_urls.desktop &&
                 j.content_urls.desktop.page) ||
-              'https://en.wikipedia.org/wiki/' +
+              host + '/wiki/' +
                 encodeURIComponent(title.replace(/ /g, '_')),
             extract: j.extract,
           };
@@ -132,29 +121,7 @@ async function bingSearchViaJina(query) {
       headers: { 'User-Agent': UA, Accept: 'text/plain, text/markdown' },
     });
     if (!res.ok) return [];
-    const md = await res.text();
-    const results = [];
-    const seen = new Set();
-    const re = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
-    let m;
-    while ((m = re.exec(md)) !== null) {
-      const title = m[1].trim();
-      const href = m[2];
-      if (
-        /(?:^|\.)bing\.com\//i.test(href) ||
-        /(?:^|\.)microsoft\.com\//i.test(href) ||
-        /(?:^|\.)microsofttranslator\.com\//i.test(href) ||
-        /(?:^|\.)go\.microsoft\.com\//i.test(href) ||
-        /^https?:\/\/r\.bing\.com\//i.test(href)
-      )
-        continue;
-      if (!title || title.length < 3 || /^image\s+\d+/i.test(title)) continue;
-      if (seen.has(href)) continue;
-      seen.add(href);
-      results.push({ title, url: href });
-      if (results.length >= 8) break;
-    }
-    return results;
+    return extractBingResults(await res.text());
   } catch {
     return [];
   }
@@ -168,23 +135,7 @@ async function duckduckgoHtmlSearch(query) {
       headers: { 'User-Agent': UA, Accept: 'text/html' },
     });
     if (!res.ok) return [];
-    const html = await res.text();
-    const results = [];
-    const re =
-      /<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
-    let m;
-    while ((m = re.exec(html)) !== null) {
-      let href = m[1];
-      const uddg = /[?&]uddg=([^&]+)/.exec(href);
-      if (uddg) href = decodeURIComponent(uddg[1]);
-      if (!/^https?:\/\//.test(href)) continue;
-      // Drop the DDG anti-abuse redirector if it ever leaks through.
-      if (/^https?:\/\/(?:[^/]*\.)?duckduckgo\.com\//i.test(href)) continue;
-      const title = stripHtml(m[2]);
-      results.push({ title, url: href });
-      if (results.length >= 8) break;
-    }
-    return results;
+    return extractDuckDuckGoResults(await res.text());
   } catch {
     return [];
   }
@@ -196,11 +147,12 @@ async function fetchViaJina(url) {
       headers: { 'User-Agent': UA, Accept: 'text/plain, text/markdown' },
     });
     if (!res.ok) return '';
-    const text = await res.text();
-    // Jina returns markdown with a small header block — keep as-is, just trim.
-    return text.trim().slice(0, MAX_CHARS_PER_PAGE);
+    const text = (await res.text()).trim();
+    return isUsableContent(text)
+      ? { content: text.slice(0, MAX_CHARS_PER_PAGE), via: 'jina' }
+      : null;
   } catch {
-    return '';
+    return null;
   }
 }
 
@@ -214,7 +166,8 @@ async function fetchDirect(url) {
     const ct = res.headers.get('content-type') || '';
     if (!/text\/html|text\/plain|application\/xhtml/i.test(ct)) return '';
     const html = await res.text();
-    return stripHtml(html).slice(0, MAX_CHARS_PER_PAGE);
+    const text = stripHtml(html).slice(0, MAX_CHARS_PER_PAGE);
+    return isUsableContent(text) ? text : '';
   } catch {
     return '';
   }
@@ -222,21 +175,23 @@ async function fetchDirect(url) {
 
 async function fetchPageContent(url) {
   const viaJina = await fetchViaJina(url);
-  if (viaJina && viaJina.length > 200) return { content: viaJina, via: 'jina' };
+  if (viaJina) return viaJina;
   const direct = await fetchDirect(url);
   if (direct) return { content: direct, via: 'direct' };
   return { content: '', via: '' };
 }
 
-async function search(query) {
+async function search(query, options = {}) {
   if (!query || typeof query !== 'string') {
     throw new Error('search(query): query must be a non-empty string');
   }
+  options = options || {};
+  const lang = normalizeLanguage(options.lang);
 
   // Run the three lookups in parallel.
   const [ia, wiki, serp] = await Promise.all([
     instantAnswer(query),
-    wikipediaArticles(query),
+    wikipediaArticles(query, lang),
     duckduckgoHtmlSearch(query),
   ]);
 
@@ -310,7 +265,7 @@ async function search(query) {
     );
   }
 
-  return {
+  const output = {
     heading: ia.Heading || '',
     answer: ia.Answer || '',
     abstract: ia.AbstractText || '',
@@ -323,6 +278,21 @@ async function search(query) {
     pages,
     escalations,
   };
+  if (options.debug === true) {
+    output.debug = {
+      counts: {
+        results: allResults.length,
+        wikipedia: wiki.length,
+        pages: pages.length,
+      },
+      escalationSteps: escalations.slice(),
+      sourceUsage: pages.reduce((usage, page) => {
+        if (page.via) usage[page.via] = (usage[page.via] || 0) + 1;
+        return usage;
+      }, {}),
+    };
+  }
+  return output;
 }
 
 if (typeof module !== 'undefined') {
