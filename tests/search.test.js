@@ -54,6 +54,14 @@ test("SERP extraction tolerates attribute order and filters engine URLs", () => 
   ]);
 });
 
+test("HTML text extraction handles variant closing tags without double decoding", () => {
+  assert.equal(
+    Shared.stripHtml("<script>discard me</script \n extra>Visible &amp; text"),
+    "Visible & text"
+  );
+  assert.equal(Shared.stripHtml("&amp;lt;script&amp;gt;"), "&lt;script&gt;");
+});
+
 test("proxied content validation rejects boilerplate and repeated junk", () => {
   assert.equal(Shared.isUsableContent("Access denied. ".repeat(30)), false);
   const repeated = "A repeated paragraph with enough readable words. ".repeat(10);

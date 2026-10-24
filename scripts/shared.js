@@ -136,18 +136,31 @@
 
   function stripHtml(value) {
     return String(value || "")
-      .replace(/<script\b[\s\S]*?<\/script\s*>/giu, " ")
-      .replace(/<style\b[\s\S]*?<\/style\s*>/giu, " ")
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script\b[^>]*>/giu, " ")
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style\b[^>]*>/giu, " ")
       .replace(/<[^>]+>/gu, " ")
-      .replace(/&nbsp;/giu, " ")
-      .replace(/&amp;/giu, "&")
-      .replace(/&lt;/giu, "<")
-      .replace(/&gt;/giu, ">")
-      .replace(/&quot;/giu, '"')
-      .replace(/&#39;/giu, "'")
-      .replace(/&#(\d+);/gu, (_, number) => String.fromCodePoint(Number(number)))
-      .replace(/&#x([0-9a-f]+);/giu, (_, number) =>
-        String.fromCodePoint(parseInt(number, 16)))
+      .replace(/&(nbsp|amp|lt|gt|quot|#39|#\d+|#x[0-9a-f]+);/giu, (entity) => {
+        const named = {
+          nbsp: " ",
+          amp: "&",
+          lt: "<",
+          gt: ">",
+          quot: '"',
+          "#39": "'",
+        };
+        const key = entity.slice(1, -1).toLowerCase();
+        if (Object.prototype.hasOwnProperty.call(named, key)) return named[key];
+        const codePoint = key.startsWith("#x")
+          ? parseInt(key.slice(2), 16)
+          : Number(key.slice(1));
+        try {
+          return codePoint <= 0x10ffff && !(codePoint >= 0xd800 && codePoint <= 0xdfff)
+            ? String.fromCodePoint(codePoint)
+            : entity;
+        } catch {
+          return entity;
+        }
+      })
       .replace(/\s+/gu, " ")
       .trim();
   }
